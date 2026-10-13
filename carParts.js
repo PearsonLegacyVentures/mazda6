@@ -101,8 +101,8 @@ function rebuildWheel(THREE,wheel,spec){
     [.116,-.075],[.169,-.088],[.218,-.047],[.225,.025],
     [.204,.094],[.153,.115],[.113,.076]
   ],.045,red,rotorZ+side*.016,'brake-caliper');
-  // Position behind the spokes without protruding outside the tyre face.
-  if(side<0)cal.position.z=rotorZ-side*.038;
+  // Keep the caliper outside the rotor on BOTH sides. Negative-Z wheels
+  // used to place it behind the rotor, making one side invisible.
   const calHighlight=addMesh(THREE,group,new THREE.BoxGeometry(.045,.009,.004),
     mat(THREE,0xf15c60,.3,.28),.171,.028,side*.128,'caliper-highlight');
 
