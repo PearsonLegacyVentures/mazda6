@@ -1,5 +1,5 @@
 const categories = [
-  ['wheels','Wheels'], ['stance','Stance'], ['aero','Aero'], ['brakes','Brakes'], ['badging','Badging'], ['glass','Glass'], ['graphics','Graphics']
+  ['wheels','Wheels'], ['stance','Stance'], ['wing','Wing'], ['diffuser','Diffuser'], ['brakes','Brakes'], ['badging','Badging'], ['glass','Glass'], ['graphics','Graphics']
 ]
 
 const options = {
@@ -13,10 +13,15 @@ const options = {
     { id:'mild', label:'Street', meta:'≈ 25 mm drop', drop:25, price:420 },
     { id:'low', label:'Low', meta:'≈ 40 mm drop', drop:40, price:780 }
   ],
-  aero: [
-    { id:'clean', label:'Clean Rear', meta:'No wing / OEM bumper', wing:false, diffuser:false, price:0 },
-    { id:'wing', label:'Aggressive Wing', meta:'Black · raised deck wing', wing:true, diffuser:false, price:0 },
-    { id:'full', label:'Wing + Diffuser', meta:'Planned final aero package', wing:true, diffuser:true, price:0 }
+  wing: [
+    { id:'none', label:'No Wing', meta:'Factory trunk silhouette', price:0 },
+    { id:'gt', label:'GT Carbon Wing', meta:'Raised dual-element blade · trunk-mounted 3D', price:0 },
+    { id:'curved', label:'Curved Carbon Wing', meta:'140 cm reference · lower sweep · 3D', price:0 }
+  ],
+  diffuser: [
+    { id:'stock', label:'Factory Rear', meta:'No aftermarket diffuser', price:0 },
+    { id:'fin', label:'Finned Carbon Diffuser', meta:'Integrated undertray · twin outlets · 3D', price:0 },
+    { id:'street', label:'Street Diffuser', meta:'Narrower integrated lower valance · 3D', price:0 }
   ],
   brakes: [
     { id:'red', label:'Red', meta:'Current', color:'#e32727', price:0 },
@@ -39,7 +44,7 @@ const options = {
   ]
 }
 
-const defaultBuild = { wheels:'black20', stance:'stock', aero:'full', brakes:'red', badging:'pearson-black', glass:'current', graphics:'none' }
+const defaultBuild = { wheels:'black20', stance:'stock', wing:'gt', diffuser:'fin', brakes:'red', badging:'pearson-black', glass:'current', graphics:'none' }
 const pipeline = [
   ['20″ forged wheels','researching'], ['Rear diffuser','ordered'], ['Aggressive wing','planned'], ['PEARSON trunk emblem','prototype'], ['Red calipers','installed']
 ]
@@ -48,7 +53,17 @@ const $ = (s) => document.querySelector(s)
 const $$ = (s) => [...document.querySelectorAll(s)]
 const money = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})
 
-let build = (() => { try { return JSON.parse(localStorage.getItem('mazda6-build')) || {...defaultBuild} } catch { return {...defaultBuild} } })()
+let build = (() => {
+  try {
+    const saved=JSON.parse(localStorage.getItem('mazda6-build'))||{}
+    // Migrate previous combined Aero selections into independent 3D modules.
+    if(saved.aero && !saved.wing) saved.wing=saved.aero==='clean'?'none':'gt'
+    if(saved.aero && !saved.diffuser) saved.diffuser=saved.aero==='full'?'fin':'stock'
+    const next={...defaultBuild,...saved}
+    delete next.aero
+    return Object.fromEntries(Object.keys(defaultBuild).map(k=>[k,options[k].some(o=>o.id===next[k])?next[k]:defaultBuild[k]]))
+  }catch { return {...defaultBuild} }
+})()
 let category = 'wheels', mode = '3d', view = 'side', compare = false, showMore = false
 const photos = { side:null, front3q:null, rear:null }
 
@@ -67,10 +82,10 @@ function renderSpec(){
   const s=selected(), w=s.wheels
   const tire=w.diameter===20?'245/35R20':w.diameter===19?'245/40R19':'225/55R17'
   const total=Object.values(s).reduce((a,b)=>a+(b.price||0),0)
-  const rows=[['Wheel',`${w.diameter}×${w.width} ET${w.offset}`],['Tire target',tire],['Brake',s.brakes.label],['Aero',s.aero.label],['Badge',s.badging.label]]
+  const rows=[['Wheel',`${w.diameter}×${w.width} ET${w.offset}`],['Tire target',tire],['Brake',s.brakes.label],['Wing',s.wing.label],['Diffuser',s.diffuser.label],['Badge',s.badging.label]]
   if(showMore) rows.push(['PCD','5×114.3'],['Center bore','67.1 mm'],['Estimated mods',money.format(total)])
   $('#specList').innerHTML=rows.map(([k,v])=>`<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')
-  $('#stageSpec').textContent=`${w.diameter}×${w.width} · ET${w.offset} · ${s.brakes.label} calipers · ${s.aero.label}`
+  $('#stageSpec').textContent=`${w.diameter}×${w.width} · ET${w.offset} · ${s.brakes.label} calipers · ${s.wing.label} · ${s.diffuser.label}`
 }
 function renderPipeline(){
   $('#pipeline').innerHTML=pipeline.map(([label,status])=>`<div class="status-row"><span>${label}</span><b class="status ${status}">${status}</b></div>`).join('')
@@ -80,12 +95,12 @@ function overlayMarkup(){
   const s=selected(), wheelScale=s.wheels.diameter===20?1.14:s.wheels.diameter===19?1.08:1
   if(view==='side'){
     const wheels=[{x:223,y:515},{x:755,y:548}].map(p=>`<g transform="translate(${p.x} ${p.y}) scale(${wheelScale})"><circle r="74" fill="#08090a" opacity=".96"/><circle r="58" fill="#14181d" stroke="#30343a" stroke-width="2"/><circle r="24" fill="${s.brakes.color}"/>${Array.from({length:10},(_,i)=>`<rect x="-5" y="-56" width="10" height="48" rx="3" fill="#1d2228" transform="rotate(${i*36})"/>`).join('')}<circle r="10" fill="#090a0c" stroke="#555b64" stroke-width="2"/></g>`).join('')
-    const wing=s.aero.wing?`<g transform="translate(75 305)"><path d="M0 36 L115 17 L173 20 L174 31 L121 34 L8 52 Z" fill="#090a0c" stroke="#3b3e44" stroke-width="2"/><rect x="35" y="40" width="7" height="36" rx="2" fill="#0d0f11"/><rect x="137" y="31" width="7" height="42" rx="2" fill="#0d0f11"/></g>`:''
+    const wing=s.wing.id!=='none'?`<g transform="translate(75 305)"><path d="M0 36 L115 17 L173 20 L174 31 L121 34 L8 52 Z" fill="#090a0c" stroke="#3b3e44" stroke-width="2"/><rect x="35" y="40" width="7" height="36" rx="2" fill="#0d0f11"/><rect x="137" y="31" width="7" height="42" rx="2" fill="#0d0f11"/></g>`:''
     const graphic=s.graphics.graphic?`<g opacity=".33" fill="none" stroke="#757b84" stroke-linecap="round"><path d="M630 388 C700 335 790 340 865 382 C803 361 743 376 685 420" stroke-width="7"/><path d="M658 408 C725 365 787 383 842 421" stroke-width="4"/></g>`:''
     return wheels+wing+graphic
   }
-  if(view==='front3q') return `${s.aero.wing?'<path d="M175 397 L286 380 L330 389 L326 399 L217 410 Z" fill="#0b0d0f" stroke="#36393d" stroke-width="2"/>':''}${s.graphics.graphic?'<path d="M575 390 C670 336 756 344 842 410" fill="none" stroke="#62666b" stroke-width="8" opacity=".3"/>':''}`
-  if(view==='rear') return `${s.aero.wing?'<path d="M330 160 L670 160 L704 178 L680 188 L320 188 L294 178 Z" fill="#08090a" stroke="#35383d" stroke-width="2"/><rect x="350" y="184" width="8" height="40" fill="#0a0b0c"/><rect x="642" y="184" width="8" height="40" fill="#0a0b0c"/>':''}${s.aero.diffuser?'<g transform="translate(250 583)"><path d="M0 0 H500 L472 62 H28 Z" fill="#060708" opacity=".92"/>'+[85,145,205,265,325,385].map(x=>`<path d="M${x} 4 L${x-8} 55 L${x+12} 55 Z" fill="#20242a"/>`).join('')+'</g>':''}${s.badging.pearson?`<text x="500" y="124" text-anchor="middle" font-size="28" font-weight="900" font-style="italic" letter-spacing="2" fill="${s.badging.badge}" stroke="#050607" stroke-width="1">PEARSON</text>`:''}`
+  if(view==='front3q') return `${s.wing.id!=='none'?'<path d="M175 397 L286 380 L330 389 L326 399 L217 410 Z" fill="#0b0d0f" stroke="#36393d" stroke-width="2"/>':''}${s.graphics.graphic?'<path d="M575 390 C670 336 756 344 842 410" fill="none" stroke="#62666b" stroke-width="8" opacity=".3"/>':''}`
+  if(view==='rear') return `${s.wing.id!=='none'?'<path d="M330 160 L670 160 L704 178 L680 188 L320 188 L294 178 Z" fill="#08090a" stroke="#35383d" stroke-width="2"/><rect x="350" y="184" width="8" height="40" fill="#0a0b0c"/><rect x="642" y="184" width="8" height="40" fill="#0a0b0c"/>':''}${s.diffuser.id!=='stock'?'<g transform="translate(250 583)"><path d="M0 0 H500 L472 62 H28 Z" fill="#060708" opacity=".92"/>'+[85,145,205,265,325,385].map(x=>`<path d="M${x} 4 L${x-8} 55 L${x+12} 55 Z" fill="#20242a"/>`).join('')+'</g>':''}${s.badging.pearson?`<text x="500" y="124" text-anchor="middle" font-size="28" font-weight="900" font-style="italic" letter-spacing="2" fill="${s.badging.badge}" stroke="#050607" stroke-width="1">PEARSON</text>`:''}`
   return ''
 }
 function renderStage(){
@@ -120,7 +135,7 @@ async function inflateModelBytes(base64){
 
 function materialForCompactPart(THREE,name){
   const materials={
-    paint:new THREE.MeshPhysicalMaterial({color:0x030405,metalness:.78,roughness:.17,clearcoat:1,clearcoatRoughness:.07}),
+    paint:new THREE.MeshPhysicalMaterial({color:0x11141a,metalness:.68,roughness:.23,clearcoat:1,clearcoatRoughness:.10}),
     chrome:new THREE.MeshStandardMaterial({color:0x30343a,metalness:.96,roughness:.18}),
     plastic:new THREE.MeshStandardMaterial({color:0x090b0e,metalness:.12,roughness:.58}),
     glass:new THREE.MeshPhysicalMaterial({color:0x061019,metalness:.18,roughness:.08,transparent:true,opacity:.58,depthWrite:false}),
@@ -255,66 +270,6 @@ function makeProxyCar(THREE,parent){
   return car
 }
 
-function createWheel(THREE,x,z){
-  const root=new THREE.Group()
-  root.position.set(x,.343,z)
-  const tireMat=new THREE.MeshStandardMaterial({color:0x050506,roughness:.82,metalness:.02})
-  const rimMat=new THREE.MeshStandardMaterial({color:0x0d1014,roughness:.22,metalness:.96})
-  const rotorMat=new THREE.MeshStandardMaterial({color:0x777d84,roughness:.35,metalness:.88})
-  const tire=new THREE.Mesh(new THREE.TorusGeometry(.286,.054,18,64),tireMat)
-  const rotor=new THREE.Mesh(new THREE.CylinderGeometry(.205,.205,.025,64),rotorMat);rotor.rotation.x=Math.PI/2
-  const rim=new THREE.Mesh(new THREE.CylinderGeometry(.252,.252,.15,64),rimMat);rim.rotation.x=Math.PI/2
-  const spokes=new THREE.Group()
-  for(let i=0;i<10;i++){
-    const a=i*Math.PI/5
-    const spoke=new THREE.Mesh(new THREE.BoxGeometry(.045,.43,.035),rimMat)
-    spoke.rotation.z=a
-    spokes.add(spoke)
-  }
-  const hub=new THREE.Mesh(new THREE.CylinderGeometry(.055,.055,.17,32),rimMat);hub.rotation.x=Math.PI/2
-  const cal=new THREE.Mesh(new THREE.BoxGeometry(.105,.25,.055),new THREE.MeshStandardMaterial({color:0xe32727,metalness:.4,roughness:.3}))
-  cal.position.set(.19,.02,z>0?.11:-.11)
-  root.add(tire,rotor,rim,spokes,hub,cal)
-  return {root,tire,rim,spokes,hub,cal}
-}
-
-function makeConfigParts(THREE,bodyRoot,wheelRoot){
-  const trimMat=new THREE.MeshStandardMaterial({color:0x060708,metalness:.78,roughness:.25})
-  const wheelGroups=[
-    createWheel(THREE,1.384,-.779),
-    createWheel(THREE,1.384,.779),
-    createWheel(THREE,-1.387,-.779),
-    createWheel(THREE,-1.387,.779)
-  ]
-  wheelGroups.forEach(w=>wheelRoot.add(w.root))
-  const wing=new THREE.Group()
-  const blade=new THREE.Mesh(new THREE.BoxGeometry(.42,.065,1.62),trimMat);blade.rotation.z=-.035;blade.position.set(-2.02,1.49,0);wing.add(blade)
-  ;[-.56,.56].forEach(z=>{const p=new THREE.Mesh(new THREE.BoxGeometry(.075,.38,.075),trimMat);p.position.set(-1.98,1.29,z);wing.add(p)})
-  bodyRoot.add(wing)
-  const diffuser=new THREE.Group()
-  const tray=new THREE.Mesh(new THREE.BoxGeometry(.34,.12,1.68),trimMat);tray.position.set(-2.28,.24,0);diffuser.add(tray)
-  for(const z of [-.62,-.37,-.12,.12,.37,.62]){
-    const fin=new THREE.Mesh(new THREE.BoxGeometry(.34,.18,.028),trimMat);fin.position.set(-2.27,.19,z);diffuser.add(fin)
-  }
-  bodyRoot.add(diffuser)
-  return {wheelGroups,wing,diffuser}
-}
-
-function setWheelSpec(THREE,wheel,diameter){
-  const outer=.3395
-  const rimR=diameter*.0254/2
-  const major=(outer+rimR)/2
-  const tube=(outer-rimR)/2
-  wheel.tire.geometry.dispose()
-  wheel.tire.geometry=new THREE.TorusGeometry(major,tube,18,72)
-  wheel.rim.geometry.dispose()
-  wheel.rim.geometry=new THREE.CylinderGeometry(rimR*.985,rimR*.985,.15,64)
-  wheel.rim.rotation.x=Math.PI/2
-  const spokeScale=rimR/.254
-  wheel.spokes.scale.set(spokeScale,spokeScale,1)
-  wheel.hub.scale.set(spokeScale,spokeScale,1)
-}
-
 async function initThree(){
   if(threeState) return
   const mount=$('#threeCanvas')
@@ -326,6 +281,7 @@ async function initThree(){
 
   try{
     const THREE=await import('three')
+    const {createGarageParts,applyGarageParts}=await import('./carParts.js?v=20261013e')
 
     const scene=new THREE.Scene()
     scene.background=new THREE.Color('#090b0e')
@@ -336,7 +292,7 @@ async function initThree(){
     renderer.setSize(mount.clientWidth,mount.clientHeight)
     renderer.outputColorSpace=THREE.SRGBColorSpace
     renderer.toneMapping=THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure=1.12
+    renderer.toneMappingExposure=1.37
     renderer.shadowMap.enabled=true
     renderer.shadowMap.type=THREE.PCFSoftShadowMap
     renderer.domElement.style.width='100%'
@@ -359,7 +315,7 @@ async function initThree(){
 
     const floor=new THREE.Mesh(
       new THREE.CircleGeometry(8.5,96),
-      new THREE.MeshStandardMaterial({color:0x101217,roughness:.92,metalness:.05})
+      new THREE.MeshStandardMaterial({color:0x090c12,roughness:.92,metalness:.05})
     )
     floor.rotation.x=-Math.PI/2
     floor.position.y=-.015
@@ -403,11 +359,12 @@ async function initThree(){
     // The compact source intentionally excludes stock wheels, so procedural
     // wheels are needed there. A future full GLB keeps its own wheels until
     // its scene graph is explicitly mapped; do not blindly double-stack them.
-    const configParts=makeConfigParts(THREE,bodyRoot,wheelRoot)
+    const parts=createGarageParts(THREE,bodyRoot,wheelRoot)
     if(source==='glb'){
-      configParts.wheelGroups.forEach(w=>{w.root.visible=false})
+      // Future textured full GLB keeps source wheels until its submeshes
+      // are separated. Compact Mazda body uses interchangeable wheels.
+      parts.wheelGroups.forEach(w=>{w.root.visible=false})
     }
-    const {wheelGroups,wing,diffuser}=configParts
 
     // Lightweight built-in orbit camera. This avoids another CDN dependency.
     const target=new THREE.Vector3(0,.72,0)
@@ -460,13 +417,13 @@ async function initThree(){
 
     if(source==='glb'){
       labelStrong.textContent='2015 Mazda6 GLB'
-      labelText.textContent='Full source model loaded · drag to rotate · scroll to zoom · double-click to reset.'
+      labelText.textContent='Interchangeable 3D wheels, wing and diffuser · drag to rotate · scroll to zoom.'
     }else{
       labelStrong.textContent='2015 Mazda6 digital base'
-      labelText.textContent='Real geometry decoded from your supplied model · drag to rotate · scroll to zoom · double-click to reset.'
+      labelText.textContent='Real Mazda body · separate 3D wheels, wing and diffuser · drag to rotate · scroll to zoom.'
     }
 
-    threeState={THREE,renderer,camera,vehicleRoot,bodyRoot,wheelRoot,carModel,wheelGroups,wing,diffuser,mount,source,updateCamera,resetCamera}
+    threeState={THREE,renderer,camera,vehicleRoot,bodyRoot,wheelRoot,carModel,parts,applyGarageParts,mount,source,updateCamera,resetCamera}
 
     const ro=new ResizeObserver(()=>{
       const w=Math.max(mount.clientWidth,1)
@@ -495,13 +452,8 @@ async function initThree(){
 function updateThree(){
   if(!threeState)return
   const s=selected()
-  threeState.wheelGroups.forEach(w=>{
-    setWheelSpec(threeState.THREE,w,s.wheels.diameter)
-    w.cal.material.color.set(s.brakes.color)
-  })
+  threeState.applyGarageParts(threeState.THREE,threeState.parts,s)
   threeState.bodyRoot.position.y=-Math.min(s.stance.drop,45)/1000
-  threeState.wing.visible=s.aero.wing
-  threeState.diffuser.visible=s.aero.diffuser
 }
 
 $$('#modeTabs button').forEach(b=>b.addEventListener('click',()=>setMode(b.dataset.mode)));$$('#viewTabs button').forEach(b=>b.addEventListener('click',()=>setView(b.dataset.view)))
