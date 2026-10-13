@@ -49,7 +49,7 @@ const $$ = (s) => [...document.querySelectorAll(s)]
 const money = new Intl.NumberFormat('en-US',{style:'currency',currency:'USD',maximumFractionDigits:0})
 
 let build = (() => { try { return JSON.parse(localStorage.getItem('mazda6-build')) || {...defaultBuild} } catch { return {...defaultBuild} } })()
-let category = 'wheels', mode = 'photo', view = 'side', compare = false, showMore = false
+let category = 'wheels', mode = '3d', view = 'side', compare = false, showMore = false
 const photos = { side:null, front3q:null, rear:null }
 
 const selected = () => Object.fromEntries(Object.entries(build).map(([k,id]) => [k, options[k].find(x=>x.id===id) || options[k][0]]))
@@ -76,7 +76,7 @@ function renderPipeline(){
   $('#pipeline').innerHTML=pipeline.map(([label,status])=>`<div class="status-row"><span>${label}</span><b class="status ${status}">${status}</b></div>`).join('')
 }
 function overlayMarkup(){
-  if(compare) return ''
+  if(compare || !photos[view]) return ''
   const s=selected(), wheelScale=s.wheels.diameter===20?1.14:s.wheels.diameter===19?1.08:1
   if(view==='side'){
     const wheels=[{x:223,y:515},{x:755,y:548}].map(p=>`<g transform="translate(${p.x} ${p.y}) scale(${wheelScale})"><circle r="74" fill="#08090a" opacity=".96"/><circle r="58" fill="#14181d" stroke="#30343a" stroke-width="2"/><circle r="24" fill="${s.brakes.color}"/>${Array.from({length:10},(_,i)=>`<rect x="-5" y="-56" width="10" height="48" rx="3" fill="#1d2228" transform="rotate(${i*36})"/>`).join('')}<circle r="10" fill="#090a0c" stroke="#555b64" stroke-width="2"/></g>`).join('')
@@ -247,93 +247,156 @@ function setWheelSpec(THREE,wheel,diameter){
 async function initThree(){
   if(threeState) return
   const mount=$('#threeCanvas')
+  const labelStrong=document.querySelector('.three-label strong')
+  const labelText=document.querySelector('.three-label span')
+  labelStrong.textContent='Loading Mazda6…'
+  labelText.textContent='Preparing the real car geometry from your attached 2015 Mazda6 model.'
+  mount.innerHTML=''
+
   try{
-    const THREE=await import('https://cdn.jsdelivr.net/npm/three@0.169.0/+esm')
-    const {OrbitControls}=await import('https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/controls/OrbitControls.js')
-    const {GLTFLoader}=await import('https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/loaders/GLTFLoader.js')
-    const scene=new THREE.Scene();scene.background=new THREE.Color('#090b0e')
-    const camera=new THREE.PerspectiveCamera(31,mount.clientWidth/Math.max(mount.clientHeight,1),.1,100);camera.position.set(6.8,2.65,6.5)
-    const renderer=new THREE.WebGLRenderer({antialias:true})
-    renderer.setPixelRatio(Math.min(devicePixelRatio,2))
+    // Keep the viewer deliberately simple and robust: one dependency only.
+    // No OrbitControls, no GLTFLoader, no chained CDN modules.
+    const THREE=await import('https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js')
+
+    const scene=new THREE.Scene()
+    scene.background=new THREE.Color('#090b0e')
+
+    const camera=new THREE.PerspectiveCamera(31,mount.clientWidth/Math.max(mount.clientHeight,1),.1,100)
+    const renderer=new THREE.WebGLRenderer({antialias:true,alpha:false,powerPreference:'high-performance'})
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio||1,2))
     renderer.setSize(mount.clientWidth,mount.clientHeight)
     renderer.outputColorSpace=THREE.SRGBColorSpace
     renderer.toneMapping=THREE.ACESFilmicToneMapping
-    renderer.toneMappingExposure=1.08
+    renderer.toneMappingExposure=1.12
     renderer.shadowMap.enabled=true
+    renderer.shadowMap.type=THREE.PCFSoftShadowMap
+    renderer.domElement.style.width='100%'
+    renderer.domElement.style.height='100%'
+    renderer.domElement.style.display='block'
+    renderer.domElement.style.touchAction='none'
     mount.append(renderer.domElement)
-    const controls=new OrbitControls(camera,renderer.domElement)
-    controls.enableDamping=true
-    controls.minDistance=4.4
-    controls.maxDistance=14
-    controls.target.set(0,.72,0)
-    scene.add(new THREE.HemisphereLight(0xdce8ff,0x0f1115,2.55))
-    const key=new THREE.DirectionalLight(0xffffff,4.1);key.position.set(4.5,7,4);key.castShadow=true;scene.add(key)
-    const rim=new THREE.DirectionalLight(0x789dff,2.2);rim.position.set(-5,3,-5);scene.add(rim)
-    const floor=new THREE.Mesh(new THREE.CircleGeometry(8.5,96),new THREE.MeshStandardMaterial({color:0x101217,roughness:.9,metalness:.06}))
-    floor.rotation.x=-Math.PI/2;floor.position.y=-.015;floor.receiveShadow=true;scene.add(floor)
 
-    const vehicleRoot=new THREE.Group();scene.add(vehicleRoot)
-    const bodyRoot=new THREE.Group();vehicleRoot.add(bodyRoot)
-    const wheelRoot=new THREE.Group();vehicleRoot.add(wheelRoot)
-    let carModel=null,source='proxy'
+    scene.add(new THREE.HemisphereLight(0xe4ecff,0x101217,2.8))
+    const key=new THREE.DirectionalLight(0xffffff,4.6)
+    key.position.set(4.5,7,4.5)
+    key.castShadow=true
+    scene.add(key)
+    const fill=new THREE.DirectionalLight(0x9bb6ff,1.9)
+    fill.position.set(-5,2.5,5)
+    scene.add(fill)
+    const rim=new THREE.DirectionalLight(0x5577ff,2.1)
+    rim.position.set(-4,3,-5)
+    scene.add(rim)
 
+    const floor=new THREE.Mesh(
+      new THREE.CircleGeometry(8.5,96),
+      new THREE.MeshStandardMaterial({color:0x101217,roughness:.92,metalness:.05})
+    )
+    floor.rotation.x=-Math.PI/2
+    floor.position.y=-.015
+    floor.receiveShadow=true
+    scene.add(floor)
+
+    const vehicleRoot=new THREE.Group()
+    scene.add(vehicleRoot)
+    const bodyRoot=new THREE.Group()
+    vehicleRoot.add(bodyRoot)
+    const wheelRoot=new THREE.Group()
+    vehicleRoot.add(wheelRoot)
+
+    let carModel=null
+    let source='compact'
     try{
-      const loader=new GLTFLoader()
-      const gltf=await loader.loadAsync('./models/mazda6.glb')
-      carModel=gltf.scene
-      const box=new THREE.Box3().setFromObject(carModel)
-      const size=box.getSize(new THREE.Vector3())
-      const scale=4.72/Math.max(size.x,size.z)
-      carModel.scale.setScalar(scale)
-      const box2=new THREE.Box3().setFromObject(carModel)
-      const center2=box2.getCenter(new THREE.Vector3())
-      carModel.position.set(-center2.x,-box2.min.y,-center2.z)
+      carModel=await loadCompactMazda(THREE)
       bodyRoot.add(carModel)
-      source='glb'
-    }catch{
-      try{
-        carModel=await loadCompactMazda(THREE)
-        bodyRoot.add(carModel)
-        source='compact'
-      }catch(err){
-        carModel=makeProxyCar(THREE,bodyRoot)
-        source='proxy'
-        console.warn('Mazda model assets unavailable; using proxy.',err)
-      }
+    }catch(modelErr){
+      console.error('Real Mazda6 geometry failed to load:',modelErr)
+      carModel=makeProxyCar(THREE,bodyRoot)
+      source='proxy'
     }
 
     const {wheelGroups,wing,diffuser}=makeConfigParts(THREE,bodyRoot,wheelRoot)
-    const labelStrong=document.querySelector('.three-label strong')
-    const labelText=document.querySelector('.three-label span')
-    if(source==='glb'){
-      labelStrong.textContent='Mazda6 3D model'
-      labelText.textContent='Full GLB asset loaded · modular build parts active.'
-    }else if(source==='compact'){
+
+    // Lightweight built-in orbit camera. This avoids another CDN dependency.
+    const target=new THREE.Vector3(0,.72,0)
+    let yaw=.72
+    let pitch=.24
+    let distance=7.25
+    let dragging=false
+    let lastX=0,lastY=0
+
+    const updateCamera=()=>{
+      const cp=Math.cos(pitch)
+      camera.position.set(
+        target.x + distance*cp*Math.cos(yaw),
+        target.y + distance*Math.sin(pitch),
+        target.z + distance*cp*Math.sin(yaw)
+      )
+      camera.lookAt(target)
+    }
+    const resetCamera=()=>{yaw=.72;pitch=.24;distance=7.25;updateCamera()}
+    resetCamera()
+
+    const canvas=renderer.domElement
+    canvas.addEventListener('pointerdown',e=>{
+      dragging=true
+      lastX=e.clientX
+      lastY=e.clientY
+      canvas.setPointerCapture?.(e.pointerId)
+    })
+    canvas.addEventListener('pointermove',e=>{
+      if(!dragging)return
+      const dx=e.clientX-lastX,dy=e.clientY-lastY
+      lastX=e.clientX
+      lastY=e.clientY
+      yaw-=dx*.007
+      pitch=Math.max(-.08,Math.min(.78,pitch+dy*.0055))
+      updateCamera()
+    })
+    const stopDrag=e=>{
+      dragging=false
+      if(e?.pointerId!==undefined) canvas.releasePointerCapture?.(e.pointerId)
+    }
+    canvas.addEventListener('pointerup',stopDrag)
+    canvas.addEventListener('pointercancel',stopDrag)
+    canvas.addEventListener('wheel',e=>{
+      e.preventDefault()
+      distance=Math.max(4.4,Math.min(12.5,distance+e.deltaY*.006))
+      updateCamera()
+    },{passive:false})
+    canvas.addEventListener('dblclick',resetCamera)
+
+    if(source==='compact'){
       labelStrong.textContent='2015 Mazda6 digital base'
-      labelText.textContent='Real geometry extracted from your attached model · wheels and aero are modular.'
+      labelText.textContent='Real geometry from your attached model · drag to rotate · scroll to zoom · double-click to reset.'
     }else{
-      labelStrong.textContent='3D geometry proxy'
-      labelText.textContent='Fallback only — model asset could not load.'
+      labelStrong.textContent='Mazda6 fallback'
+      labelText.textContent='The real model asset failed to decode, so the emergency proxy is showing.'
     }
 
-    threeState={THREE,renderer,camera,controls,vehicleRoot,bodyRoot,wheelRoot,carModel,wheelGroups,wing,diffuser,mount,source}
+    threeState={THREE,renderer,camera,vehicleRoot,bodyRoot,wheelRoot,carModel,wheelGroups,wing,diffuser,mount,source,updateCamera,resetCamera}
+
     const ro=new ResizeObserver(()=>{
-      camera.aspect=mount.clientWidth/Math.max(mount.clientHeight,1)
+      const w=Math.max(mount.clientWidth,1)
+      const h=Math.max(mount.clientHeight,1)
+      camera.aspect=w/h
       camera.updateProjectionMatrix()
-      renderer.setSize(mount.clientWidth,mount.clientHeight)
+      renderer.setSize(w,h,false)
     })
     ro.observe(mount)
     threeState.ro=ro
+
     const loop=()=>{
-      controls.update()
       renderer.render(scene,camera)
       threeState.raf=requestAnimationFrame(loop)
     }
     loop()
     updateThree()
   }catch(err){
-    mount.innerHTML='<div style="padding:28px;color:#aab0b9">3D engine could not load. Photo Twin remains fully usable.</div>'
-    console.error(err)
+    console.error('3D viewer failed:',err)
+    labelStrong.textContent='3D viewer error'
+    labelText.textContent='The car model is in the repo, but the browser could not start WebGL.'
+    mount.innerHTML='<div style="padding:72px 28px;text-align:center;color:#c8cdd5;font:600 14px system-ui">Could not start the 3D viewer.<br><span style="font-weight:400;color:#777f8b">Refresh once. If this remains, the browser is blocking WebGL or the Three.js CDN.</span></div>'
   }
 }
 
@@ -357,4 +420,4 @@ $('#moreBtn').addEventListener('click',()=>{showMore=!showMore;$('#moreBtn').tex
 $('#resetBtn').addEventListener('click',()=>{build={...defaultBuild};save();renderOptions();renderSpec();renderStage()})
 $('#exportBtn').addEventListener('click',()=>{const payload={name:$('#buildName').value||'Pearson Spec',vehicle:'2016 Mazda6 GS Sedan',build,selected:selected(),exportedAt:new Date().toISOString()};const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=(payload.name.toLowerCase().replace(/[^a-z0-9]+/g,'-')||'mazda6-build')+'.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)})
 
-renderCategories();renderOptions();renderPipeline();renderStage();setMode('photo')
+renderCategories();renderOptions();renderPipeline();renderStage();setMode('3d')
