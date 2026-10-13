@@ -102,14 +102,20 @@ function setView(next){view=next;$$('#viewTabs button').forEach(b=>b.classList.t
 
 let threeState=null
 
+let pakoModulePromise=null
+
 async function inflateModelBytes(base64){
-  const compressed=Uint8Array.from(atob(base64),c=>c.charCodeAt(0))
-  if('DecompressionStream' in window){
-    const stream=new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate'))
-    return new Uint8Array(await new Response(stream).arrayBuffer())
-  }
-  const {inflate}=await import('https://cdn.jsdelivr.net/npm/pako@2.1.0/+esm')
-  return inflate(compressed)
+  const binary=atob(base64)
+  const compressed=new Uint8Array(binary.length)
+  for(let i=0;i<binary.length;i++) compressed[i]=binary.charCodeAt(i)
+
+  // Use one deterministic inflater in every browser. The compact asset is
+  // zlib-wrapped DEFLATE; relying on browser DecompressionStream behavior
+  // made the real-model path unnecessarily fragile.
+  if(!pakoModulePromise) pakoModulePromise=import('https://cdn.jsdelivr.net/npm/pako@2.1.0/+esm')
+  const {inflate}=await pakoModulePromise
+  const raw=inflate(compressed)
+  return raw instanceof Uint8Array ? raw : new Uint8Array(raw)
 }
 
 function materialForCompactPart(THREE,name){
@@ -129,13 +135,24 @@ function materialForCompactPart(THREE,name){
 
 async function decodeCompactGeometry(THREE,part){
   const raw=await inflateModelBytes(part.data)
-  const q=new Int16Array(raw.buffer,raw.byteOffset,part.qbytes/2)
+  const expected=part.qbytes+part.ibytes
+  if(raw.byteLength!==expected) throw new Error(`Compact geometry byte mismatch: expected ${expected}, got ${raw.byteLength}`)
+
   const positions=new Float32Array(part.v*3)
-  for(let i=0;i<positions.length;i++) positions[i]=q[i]/part.scale
-  const indexBytes=raw.slice(part.qbytes,part.qbytes+part.ibytes)
-  const indices=part.i==='u32'
-    ? new Uint32Array(indexBytes.buffer,indexBytes.byteOffset,indexBytes.byteLength/4)
-    : new Uint16Array(indexBytes.buffer,indexBytes.byteOffset,indexBytes.byteLength/2)
+  const positionView=new DataView(raw.buffer,raw.byteOffset,part.qbytes)
+  for(let i=0;i<positions.length;i++) positions[i]=positionView.getInt16(i*2,true)/part.scale
+
+  const indexCount=part.f*3
+  const indices=part.i==='u32' ? new Uint32Array(indexCount) : new Uint16Array(indexCount)
+  const indexView=new DataView(raw.buffer,raw.byteOffset+part.qbytes,part.ibytes)
+  let maxIndex=0
+  for(let i=0;i<indexCount;i++){
+    const value=part.i==='u32' ? indexView.getUint32(i*4,true) : indexView.getUint16(i*2,true)
+    indices[i]=value
+    if(value>maxIndex) maxIndex=value
+  }
+  if(maxIndex>=part.v) throw new Error(`Compact geometry index ${maxIndex} exceeds vertex count ${part.v}`)
+
   const geom=new THREE.BufferGeometry()
   geom.setAttribute('position',new THREE.BufferAttribute(positions,3))
   geom.setIndex(new THREE.BufferAttribute(indices,1))
@@ -145,9 +162,66 @@ async function decodeCompactGeometry(THREE,part){
   return geom
 }
 
+function normalizeMazdaModel(THREE,model,targetLength=4.86){
+  model.updateMatrixWorld(true)
+  let box=new THREE.Box3().setFromObject(model)
+  let size=box.getSize(new THREE.Vector3())
+  if(!Number.isFinite(size.x+size.y+size.z)||Math.max(size.x,size.y,size.z)<.01) throw new Error('Mazda model has invalid bounds')
+
+  // The supplied model is expected to be lengthwise on X. If an upgraded GLB
+  // arrives lengthwise on Z, rotate it once so the garage controls stay stable.
+  if(size.z>size.x){
+    model.rotation.y+=Math.PI/2
+    model.updateMatrixWorld(true)
+    box=new THREE.Box3().setFromObject(model)
+    size=box.getSize(new THREE.Vector3())
+  }
+
+  const length=Math.max(size.x,size.z)
+  const scale=targetLength/length
+  model.scale.multiplyScalar(scale)
+  model.updateMatrixWorld(true)
+
+  box=new THREE.Box3().setFromObject(model)
+  const center=box.getCenter(new THREE.Vector3())
+  model.position.x-=center.x
+  model.position.z-=center.z
+  model.position.y-=box.min.y
+  model.updateMatrixWorld(true)
+
+  const finalBox=new THREE.Box3().setFromObject(model)
+  const finalSize=finalBox.getSize(new THREE.Vector3())
+  return {
+    size:{x:finalSize.x,y:finalSize.y,z:finalSize.z},
+    min:{x:finalBox.min.x,y:finalBox.min.y,z:finalBox.min.z},
+    max:{x:finalBox.max.x,y:finalBox.max.y,z:finalBox.max.z}
+  }
+}
+
+async function loadFullMazda(THREE){
+  const {GLTFLoader}=await import('three/addons/loaders/GLTFLoader.js')
+  const loader=new GLTFLoader()
+  const gltf=await loader.loadAsync('./models/mazda6.glb')
+  const model=gltf?.scene
+  if(!model) throw new Error('mazda6.glb loaded without a scene')
+
+  model.traverse(node=>{
+    if(!node.isMesh) return
+    node.castShadow=true
+    node.receiveShadow=true
+    if(Array.isArray(node.material)){
+      node.material.forEach(mat=>{ if(mat) mat.needsUpdate=true })
+    }else if(node.material){
+      node.material.needsUpdate=true
+    }
+  })
+  model.userData.mazdaBounds=normalizeMazdaModel(THREE,model)
+  return model
+}
+
 async function loadCompactMazda(THREE){
-  const response=await fetch('./models/mazda6-compact.json',{cache:'force-cache'})
-  if(!response.ok) throw new Error('Compact Mazda6 asset missing')
+  const response=await fetch('./models/mazda6-compact.json',{cache:'no-store'})
+  if(!response.ok) throw new Error(`Compact Mazda6 asset HTTP ${response.status}`)
   const data=await response.json()
   const group=new THREE.Group()
   const order=['bottom','plastic','paint','chrome','glass','brake','position','reverse','plate']
@@ -162,11 +236,8 @@ async function loadCompactMazda(THREE){
     mesh.renderOrder=name==='glass'?3:1
     group.add(mesh)
   }
-  const box=new THREE.Box3().setFromObject(group)
-  const center=box.getCenter(new THREE.Vector3())
-  group.position.x-=center.x
-  group.position.z-=center.z
-  group.position.y-=box.min.y
+  if(!group.children.length) throw new Error('Compact Mazda6 asset decoded with no meshes')
+  group.userData.mazdaBounds=normalizeMazdaModel(THREE,group)
   return group
 }
 
@@ -254,9 +325,7 @@ async function initThree(){
   mount.innerHTML=''
 
   try{
-    // Keep the viewer deliberately simple and robust: one dependency only.
-    // No OrbitControls, no GLTFLoader, no chained CDN modules.
-    const THREE=await import('https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js')
+    const THREE=await import('three')
 
     const scene=new THREE.Scene()
     scene.background=new THREE.Color('#090b0e')
@@ -305,17 +374,40 @@ async function initThree(){
     vehicleRoot.add(wheelRoot)
 
     let carModel=null
-    let source='compact'
+    let source='glb'
+    let glbError=null
+    let compactError=null
+
     try{
-      carModel=await loadCompactMazda(THREE)
+      carModel=await loadFullMazda(THREE)
       bodyRoot.add(carModel)
-    }catch(modelErr){
-      console.error('Real Mazda6 geometry failed to load:',modelErr)
-      carModel=makeProxyCar(THREE,bodyRoot)
-      source='proxy'
+    }catch(err){
+      glbError=err
+      console.info('Full Mazda6 GLB unavailable; trying compact source.',err)
+      source='compact'
+      try{
+        carModel=await loadCompactMazda(THREE)
+        bodyRoot.add(carModel)
+      }catch(compactErr){
+        compactError=compactErr
+        console.error('Compact Mazda6 source also failed.',compactErr)
+      }
     }
 
-    const {wheelGroups,wing,diffuser}=makeConfigParts(THREE,bodyRoot,wheelRoot)
+    if(!carModel){
+      const glbMessage=glbError?.message||'unknown GLB error'
+      const compactMessage=compactError?.message||'unknown compact error'
+      throw new Error(`Mazda model failed. GLB: ${glbMessage}. Compact: ${compactMessage}`)
+    }
+
+    // The compact source intentionally excludes stock wheels, so procedural
+    // wheels are needed there. A future full GLB keeps its own wheels until
+    // its scene graph is explicitly mapped; do not blindly double-stack them.
+    const configParts=makeConfigParts(THREE,bodyRoot,wheelRoot)
+    if(source==='glb'){
+      configParts.wheelGroups.forEach(w=>{w.root.visible=false})
+    }
+    const {wheelGroups,wing,diffuser}=configParts
 
     // Lightweight built-in orbit camera. This avoids another CDN dependency.
     const target=new THREE.Vector3(0,.72,0)
@@ -366,12 +458,12 @@ async function initThree(){
     },{passive:false})
     canvas.addEventListener('dblclick',resetCamera)
 
-    if(source==='compact'){
-      labelStrong.textContent='2015 Mazda6 digital base'
-      labelText.textContent='Real geometry from your attached model · drag to rotate · scroll to zoom · double-click to reset.'
+    if(source==='glb'){
+      labelStrong.textContent='2015 Mazda6 GLB'
+      labelText.textContent='Full source model loaded · drag to rotate · scroll to zoom · double-click to reset.'
     }else{
-      labelStrong.textContent='Mazda6 fallback'
-      labelText.textContent='The real model asset failed to decode, so the emergency proxy is showing.'
+      labelStrong.textContent='2015 Mazda6 digital base'
+      labelText.textContent='Real geometry decoded from your supplied model · drag to rotate · scroll to zoom · double-click to reset.'
     }
 
     threeState={THREE,renderer,camera,vehicleRoot,bodyRoot,wheelRoot,carModel,wheelGroups,wing,diffuser,mount,source,updateCamera,resetCamera}
@@ -394,9 +486,9 @@ async function initThree(){
     updateThree()
   }catch(err){
     console.error('3D viewer failed:',err)
-    labelStrong.textContent='3D viewer error'
-    labelText.textContent='The car model is in the repo, but the browser could not start WebGL.'
-    mount.innerHTML='<div style="padding:72px 28px;text-align:center;color:#c8cdd5;font:600 14px system-ui">Could not start the 3D viewer.<br><span style="font-weight:400;color:#777f8b">Refresh once. If this remains, the browser is blocking WebGL or the Three.js CDN.</span></div>'
+    labelStrong.textContent='Mazda6 model error'
+    labelText.textContent=err?.message||'The real Mazda model could not load.'
+    mount.innerHTML='<div style="padding:72px 28px;text-align:center;color:#c8cdd5;font:600 14px system-ui">The real Mazda6 model did not load.<br><span style="font-weight:400;color:#777f8b">No proxy is being substituted. Check the status label for the actual failure.</span></div>'
   }
 }
 
