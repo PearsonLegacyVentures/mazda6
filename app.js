@@ -57,8 +57,81 @@ function setMode(next){mode=next;$$('#modeTabs button').forEach(b=>b.classList.t
 function setView(next){view=next;$$('#viewTabs button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));renderStage()}
 
 let threeState=null
-function makeProxyCar(THREE, scene){
-  const car=new THREE.Group();scene.add(car)
+
+async function inflateModelBytes(base64){
+  const compressed=Uint8Array.from(atob(base64),c=>c.charCodeAt(0))
+  if('DecompressionStream' in window){
+    const stream=new Blob([compressed]).stream().pipeThrough(new DecompressionStream('deflate'))
+    return new Uint8Array(await new Response(stream).arrayBuffer())
+  }
+  const {inflate}=await import('https://cdn.jsdelivr.net/npm/pako@2.1.0/+esm')
+  return inflate(compressed)
+}
+
+function materialForCompactPart(THREE,name){
+  const paint=new THREE.MeshPhysicalMaterial({
+    color:0x030405,metalness:.78,roughness:.17,clearcoat:1,clearcoatRoughness:.07
+  })
+  const materials={
+    paint,
+    chrome:new THREE.MeshStandardMaterial({color:0x30343a,metalness:.96,roughness:.18}),
+    plastic:new THREE.MeshStandardMaterial({color:0x090b0e,metalness:.12,roughness:.58}),
+    glass:new THREE.MeshPhysicalMaterial({color:0x061019,metalness:.18,roughness:.08,transparent:true,opacity:.58,depthWrite:false}),
+    brake:new THREE.MeshStandardMaterial({color:0xb70f18,emissive:0x5e0006,emissiveIntensity:.9,metalness:.25,roughness:.34}),
+    position:new THREE.MeshStandardMaterial({color:0x8d0710,emissive:0x530008,emissiveIntensity:.65,metalness:.15,roughness:.35}),
+    reverse:new THREE.MeshStandardMaterial({color:0xdce9ee,emissive:0x4a5558,emissiveIntensity:.35,metalness:.05,roughness:.25}),
+    bottom:new THREE.MeshStandardMaterial({color:0x07080a,metalness:.08,roughness:.78}),
+    plate:new THREE.MeshStandardMaterial({color:0x16191e,metalness:.08,roughness:.5})
+  }
+  return materials[name]||materials.plastic
+}
+
+async function decodeCompactGeometry(THREE,part){
+  const raw=await inflateModelBytes(part.data)
+  const q=new Int16Array(raw.buffer,raw.byteOffset,part.qbytes/2)
+  const positions=new Float32Array(part.v*3)
+  for(let i=0;i<positions.length;i++) positions[i]=q[i]/part.scale
+  const indexBytes=raw.slice(part.qbytes,part.qbytes+part.ibytes)
+  const indices=part.i==='u32'
+    ? new Uint32Array(indexBytes.buffer,indexBytes.byteOffset,indexBytes.byteLength/4)
+    : new Uint16Array(indexBytes.buffer,indexBytes.byteOffset,indexBytes.byteLength/2)
+  const geom=new THREE.BufferGeometry()
+  geom.setAttribute('position',new THREE.BufferAttribute(positions,3))
+  geom.setIndex(new THREE.BufferAttribute(indices,1))
+  geom.computeVertexNormals()
+  geom.computeBoundingBox()
+  geom.computeBoundingSphere()
+  return geom
+}
+
+async function loadCompactMazda(THREE){
+  const data=await fetch('./models/mazda6-compact.json',{cache:'force-cache'}).then(r=>{
+    if(!r.ok) throw new Error('Compact Mazda6 asset missing')
+    return r.json()
+  })
+  const group=new THREE.Group()
+  const order=['bottom','plastic','paint','chrome','glass','brake','position','reverse','plate']
+  for(const name of order){
+    const part=data[name]
+    if(!part) continue
+    const geom=await decodeCompactGeometry(THREE,part)
+    const mesh=new THREE.Mesh(geom,materialForCompactPart(THREE,name))
+    mesh.name='mazda6_'+name
+    mesh.castShadow=name!=='glass'
+    mesh.receiveShadow=true
+    mesh.renderOrder=name==='glass'?3:1
+    group.add(mesh)
+  }
+  const box=new THREE.Box3().setFromObject(group)
+  const center=box.getCenter(new THREE.Vector3())
+  group.position.x-=center.x
+  group.position.z-=center.z
+  group.position.y-=box.min.y
+  return group
+}
+
+function makeProxyCar(THREE,parent){
+  const car=new THREE.Group();parent.add(car)
   const bodyMat=new THREE.MeshPhysicalMaterial({color:0x050607,metalness:.78,roughness:.16,clearcoat:1,clearcoatRoughness:.08})
   const glassMat=new THREE.MeshPhysicalMaterial({color:0x0b1720,metalness:.25,roughness:.13,transparent:true,opacity:.82})
   const trimMat=new THREE.MeshStandardMaterial({color:0x08090b,metalness:.7,roughness:.3})
@@ -66,41 +139,67 @@ function makeProxyCar(THREE, scene){
   box(4.9,.65,1.9,bodyMat,0,.73,0);box(2.0,.28,1.78,bodyMat,1.28,1.12,0);box(2.45,.82,1.58,glassMat,-.42,1.49,0);box(1.85,.13,1.52,bodyMat,-.48,1.94,0);box(.38,.45,1.78,bodyMat,2.5,.66,0);box(.38,.45,1.78,bodyMat,-2.5,.66,0)
   return car
 }
-function makeConfigParts(THREE, parent){
-  const trimMat=new THREE.MeshStandardMaterial({color:0x08090b,metalness:.7,roughness:.3})
-  const wheelGroups=[]
-  ;[[1.55,.55,.94],[1.55,.55,-.94],[-1.55,.55,.94],[-1.55,.55,-.94]].forEach(([x,y,z])=>{
-    const g=new THREE.Group();g.position.set(x,y,z)
-    const tire=new THREE.Mesh(new THREE.CylinderGeometry(.53,.53,.26,48),new THREE.MeshStandardMaterial({color:0x050506,roughness:.76}));tire.rotation.x=Math.PI/2;g.add(tire)
-    const rimM=new THREE.Mesh(new THREE.CylinderGeometry(.39,.39,.275,40),new THREE.MeshStandardMaterial({color:0x12151a,roughness:.28,metalness:.92}));rimM.rotation.x=Math.PI/2;g.add(rimM)
-    const cal=new THREE.Mesh(new THREE.BoxGeometry(.18,.34,.08),new THREE.MeshStandardMaterial({color:0xe32727,metalness:.4,roughness:.3}));cal.position.set(.19,0,z>0?.17:-.17);g.add(cal)
-    for(let i=0;i<10;i++){const sp=new THREE.Mesh(new THREE.BoxGeometry(.055,.58,.045),trimMat);sp.position.z=z>0?.145:-.145;sp.rotation.z=i*Math.PI/5;g.add(sp)}
-    parent.add(g);wheelGroups.push({g,cal})
-  })
+
+function createWheel(THREE,x,z){
+  const root=new THREE.Group()
+  root.position.set(x,.343,z)
+  const tireMat=new THREE.MeshStandardMaterial({color:0x050506,roughness:.82,metalness:.02})
+  const rimMat=new THREE.MeshStandardMaterial({color:0x0d1014,roughness:.22,metalness:.96})
+  const rotorMat=new THREE.MeshStandardMaterial({color:0x777d84,roughness:.35,metalness:.88})
+  const tire=new THREE.Mesh(new THREE.TorusGeometry(.286,.054,18,64),tireMat)
+  const rotor=new THREE.Mesh(new THREE.CylinderGeometry(.205,.205,.025,64),rotorMat);rotor.rotation.x=Math.PI/2
+  const rim=new THREE.Mesh(new THREE.CylinderGeometry(.252,.252,.15,64),rimMat);rim.rotation.x=Math.PI/2
+  const spokes=new THREE.Group()
+  for(let i=0;i<10;i++){
+    const a=i*Math.PI/5
+    const spoke=new THREE.Mesh(new THREE.BoxGeometry(.045,.43,.035),rimMat)
+    spoke.rotation.z=a
+    spokes.add(spoke)
+  }
+  const hub=new THREE.Mesh(new THREE.CylinderGeometry(.055,.055,.17,32),rimMat);hub.rotation.x=Math.PI/2
+  const cal=new THREE.Mesh(new THREE.BoxGeometry(.105,.25,.055),new THREE.MeshStandardMaterial({color:0xe32727,metalness:.4,roughness:.3}))
+  cal.position.set(.19,.02,z>0?.11:-.11)
+  root.add(tire,rotor,rim,spokes,hub,cal)
+  return {root,tire,rim,spokes,hub,cal}
+}
+
+function makeConfigParts(THREE,bodyRoot,wheelRoot){
+  const trimMat=new THREE.MeshStandardMaterial({color:0x060708,metalness:.78,roughness:.25})
+  const wheelGroups=[
+    createWheel(THREE,1.384,-.779),
+    createWheel(THREE,1.384,.779),
+    createWheel(THREE,-1.387,-.779),
+    createWheel(THREE,-1.387,.779)
+  ]
+  wheelGroups.forEach(w=>wheelRoot.add(w.root))
   const wing=new THREE.Group()
-  const blade=new THREE.Mesh(new THREE.BoxGeometry(1.65,.09,.46),trimMat);blade.rotation.z=-.08;blade.position.set(-2.12,1.72,0);wing.add(blade)
-  ;[-.55,.55].forEach(z=>{const p=new THREE.Mesh(new THREE.BoxGeometry(.09,.54,.08),trimMat);p.position.set(-2.03,1.42,z);wing.add(p)})
-  parent.add(wing)
-  const diffuser=new THREE.Mesh(new THREE.BoxGeometry(.5,.2,1.72),trimMat);diffuser.position.set(-2.53,.37,0);parent.add(diffuser)
+  const blade=new THREE.Mesh(new THREE.BoxGeometry(.42,.065,1.62),trimMat);blade.rotation.z=-.035;blade.position.set(-2.02,1.49,0);wing.add(blade)
+  ;[-.56,.56].forEach(z=>{const p=new THREE.Mesh(new THREE.BoxGeometry(.075,.38,.075),trimMat);p.position.set(-1.98,1.29,z);wing.add(p)})
+  bodyRoot.add(wing)
+  const diffuser=new THREE.Group()
+  const tray=new THREE.Mesh(new THREE.BoxGeometry(.34,.12,1.68),trimMat);tray.position.set(-2.28,.24,0);diffuser.add(tray)
+  for(const z of [-.62,-.37,-.12,.12,.37,.62]){
+    const fin=new THREE.Mesh(new THREE.BoxGeometry(.34,.18,.028),trimMat);fin.position.set(-2.27,.19,z);diffuser.add(fin)
+  }
+  bodyRoot.add(diffuser)
   return {wheelGroups,wing,diffuser}
 }
-function normalizeImportedCar(THREE, model){
-  const box=new THREE.Box3().setFromObject(model)
-  const size=box.getSize(new THREE.Vector3())
-  const center=box.getCenter(new THREE.Vector3())
-  const longest=Math.max(size.x,size.y,size.z)||1
-  const targetLength=5.0
-  const scale=targetLength/longest
-  model.scale.setScalar(scale)
-  const scaledBox=new THREE.Box3().setFromObject(model)
-  const scaledCenter=scaledBox.getCenter(new THREE.Vector3())
-  const scaledMin=scaledBox.min
-  model.position.x-=scaledCenter.x
-  model.position.z-=scaledCenter.z
-  model.position.y-=scaledMin.y
-  model.rotation.y=Math.PI/2
-  return model
+
+function setWheelSpec(THREE,wheel,diameter){
+  const outer=.3395
+  const rimR=diameter*.0254/2
+  const major=(outer+rimR)/2
+  const tube=(outer-rimR)/2
+  wheel.tire.geometry.dispose()
+  wheel.tire.geometry=new THREE.TorusGeometry(major,tube,18,72)
+  wheel.rim.geometry.dispose()
+  wheel.rim.geometry=new THREE.CylinderGeometry(rimR*.985,rimR*.985,.15,64)
+  wheel.rim.rotation.x=Math.PI/2
+  const spokeScale=rimR/.254
+  wheel.spokes.scale.set(spokeScale,spokeScale,1)
+  wheel.hub.scale.set(spokeScale,spokeScale,1)
 }
+
 async function initThree(){
   if(threeState) return
   const mount=$('#threeCanvas')
@@ -108,38 +207,57 @@ async function initThree(){
     const THREE=await import('https://cdn.jsdelivr.net/npm/three@0.169.0/+esm')
     const {OrbitControls}=await import('https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/controls/OrbitControls.js')
     const {GLTFLoader}=await import('https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/loaders/GLTFLoader.js')
-    const scene=new THREE.Scene();scene.background=new THREE.Color('#0b0d10')
-    const camera=new THREE.PerspectiveCamera(34,mount.clientWidth/Math.max(mount.clientHeight,1),.1,100);camera.position.set(7.2,3.2,8.2)
-    const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(mount.clientWidth,mount.clientHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.15;renderer.shadowMap.enabled=true;mount.append(renderer.domElement)
-    const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.minDistance=5;controls.maxDistance=16;controls.target.set(0,.75,0)
-    scene.add(new THREE.HemisphereLight(0xd8e6ff,0x151515,2.7));const key=new THREE.DirectionalLight(0xffffff,4.2);key.position.set(5,8,4);scene.add(key);const rim=new THREE.DirectionalLight(0x83a8ff,2.4);rim.position.set(-6,3,-4);scene.add(rim)
-    const floor=new THREE.Mesh(new THREE.CircleGeometry(8.5,96),new THREE.MeshStandardMaterial({color:0x111318,roughness:.88,metalness:.08}));floor.rotation.x=-Math.PI/2;floor.position.y=-.02;scene.add(floor)
+    const scene=new THREE.Scene();scene.background=new THREE.Color('#090b0e')
+    const camera=new THREE.PerspectiveCamera(31,mount.clientWidth/Math.max(mount.clientHeight,1),.1,100);camera.position.set(6.8,2.65,6.5)
+    const renderer=new THREE.WebGLRenderer({antialias:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(mount.clientWidth,mount.clientHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.08;renderer.shadowMap.enabled=true;mount.append(renderer.domElement)
+    const controls=new OrbitControls(camera,renderer.domElement);controls.enableDamping=true;controls.minDistance=4.4;controls.maxDistance=14;controls.target.set(0,.72,0)
+    scene.add(new THREE.HemisphereLight(0xdce8ff,0x0f1115,2.55))
+    const key=new THREE.DirectionalLight(0xffffff,4.1);key.position.set(4.5,7,4);key.castShadow=true;scene.add(key)
+    const rim=new THREE.DirectionalLight(0x789dff,2.2);rim.position.set(-5,3,-5);scene.add(rim)
+    const floor=new THREE.Mesh(new THREE.CircleGeometry(8.5,96),new THREE.MeshStandardMaterial({color:0x101217,roughness:.9,metalness:.06}));floor.rotation.x=-Math.PI/2;floor.position.y=-.015;floor.receiveShadow=true;scene.add(floor)
 
-    const carRoot=new THREE.Group();scene.add(carRoot)
-    let carModel=null, usingRealModel=false
+    const vehicleRoot=new THREE.Group();scene.add(vehicleRoot)
+    const bodyRoot=new THREE.Group();vehicleRoot.add(bodyRoot)
+    const wheelRoot=new THREE.Group();vehicleRoot.add(wheelRoot)
+    let carModel=null,source='proxy'
     try{
       const loader=new GLTFLoader()
       const gltf=await loader.loadAsync('./models/mazda6.glb')
-      carModel=normalizeImportedCar(THREE,gltf.scene)
-      carRoot.add(carModel)
-      usingRealModel=true
-      document.querySelector('.three-label strong').textContent='Mazda6 3D model'
-      document.querySelector('.three-label span').textContent='Loaded from /models/mazda6.glb · custom parts remain modular.'
-    }catch(modelErr){
-      carModel=makeProxyCar(THREE,carRoot)
-      document.querySelector('.three-label strong').textContent='3D geometry proxy'
-      document.querySelector('.three-label span').textContent='Add public/models/mazda6.glb to replace this automatically.'
-      console.warn('Mazda6 GLB not found; using proxy.',modelErr)
+      carModel=gltf.scene
+      const box=new THREE.Box3().setFromObject(carModel),center=box.getCenter(new THREE.Vector3()),size=box.getSize(new THREE.Vector3())
+      const scale=4.72/Math.max(size.x,size.z)
+      carModel.scale.setScalar(scale)
+      const box2=new THREE.Box3().setFromObject(carModel),center2=box2.getCenter(new THREE.Vector3())
+      carModel.position.set(-center2.x,-box2.min.y,-center2.z)
+      bodyRoot.add(carModel);source='glb'
+    }catch{
+      try{
+        carModel=await loadCompactMazda(THREE)
+        bodyRoot.add(carModel);source='compact'
+      }catch(err){
+        carModel=makeProxyCar(THREE,bodyRoot);source='proxy';console.warn('Mazda model assets unavailable; using proxy.',err)
+      }
     }
 
-    const configRoot=new THREE.Group();carRoot.add(configRoot)
-    const {wheelGroups,wing,diffuser}=makeConfigParts(THREE,configRoot)
-    threeState={THREE,renderer,camera,controls,car:carRoot,carModel,configRoot,wheelGroups,wing,diffuser,mount,usingRealModel}
+    const {wheelGroups,wing,diffuser}=makeConfigParts(THREE,bodyRoot,wheelRoot)
+    const labelStrong=document.querySelector('.three-label strong'),labelText=document.querySelector('.three-label span')
+    if(source==='glb'){labelStrong.textContent='Mazda6 3D model';labelText.textContent='Full GLB asset loaded · modular build parts active.'}
+    else if(source==='compact'){labelStrong.textContent='2015 Mazda6 digital base';labelText.textContent='Real geometry extracted from your attached model · wheels and aero are modular.'}
+    else{labelStrong.textContent='3D geometry proxy';labelText.textContent='Fallback only — model asset could not load.'}
+
+    threeState={THREE,renderer,camera,controls,vehicleRoot,bodyRoot,wheelRoot,carModel,wheelGroups,wing,diffuser,mount,source}
     const ro=new ResizeObserver(()=>{camera.aspect=mount.clientWidth/Math.max(mount.clientHeight,1);camera.updateProjectionMatrix();renderer.setSize(mount.clientWidth,mount.clientHeight)});ro.observe(mount);threeState.ro=ro
     const loop=()=>{controls.update();renderer.render(scene,camera);threeState.raf=requestAnimationFrame(loop)};loop();updateThree()
   }catch(err){mount.innerHTML='<div style="padding:28px;color:#aab0b9">3D engine could not load. Photo Twin remains fully usable.</div>';console.error(err)}
 }
-function updateThree(){if(!threeState)return;const s=selected(),scale=s.wheels.diameter===20?1.1:s.wheels.diameter===19?1.055:1;threeState.wheelGroups.forEach(({g,cal})=>{g.scale.setScalar(scale);cal.material.color.set(s.brakes.color)});threeState.car.position.y=-Math.min(s.stance.drop,45)/220;threeState.wing.visible=s.aero.wing;threeState.diffuser.visible=s.aero.diffuser}
+function updateThree(){
+  if(!threeState)return
+  const s=selected()
+  threeState.wheelGroups.forEach(w=>{setWheelSpec(threeState.THREE,w,s.wheels.diameter);w.cal.material.color.set(s.brakes.color)})
+  threeState.bodyRoot.position.y=-Math.min(s.stance.drop,45)/1000
+  threeState.wing.visible=s.aero.wing
+  threeState.diffuser.visible=s.aero.diffuser
+}
 
 $$('#modeTabs button').forEach(b=>b.classList.toggle('active',b.dataset.mode===mode));$('#photoStage').classList.toggle('hidden',mode!=='photo');$('#threeWrap').classList.toggle('hidden',mode!=='3d');$('#viewTabs').classList.toggle('hidden',mode!=='photo');if(mode==='3d') initThree()}
 function setView(next){view=next;$$('#viewTabs button').forEach(b=>b.classList.toggle('active',b.dataset.view===view));renderStage()}
