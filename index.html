@@ -18,11 +18,11 @@
     <main class="workspace">
       <section class="stage-panel">
         <div class="stage-toolbar">
-          <div class="segmented" id="modeTabs"><button data-mode="photo" class="active">Photo Twin</button><button data-mode="3d">3D Lab</button></div>
+          <div class="segmented" id="modeTabs"><button data-mode="photo">Photo Twin</button><button data-mode="3d" class="active">3D Lab</button></div>
           <div class="segmented subtle" id="viewTabs"><button data-view="side" class="active">Side</button><button data-view="front3q">3/4</button><button data-view="rear">Rear</button></div>
         </div>
         <div class="stage-frame" id="stageFrame">
-          <div class="photo-stage" id="photoStage">
+          <div class="photo-stage hidden" id="photoStage">
             <div class="photo-placeholder" id="photoPlaceholder">
               <div class="car-lineart" aria-hidden="true"></div>
               <strong>Load your real Mazda6 angle</strong><span>Your current-car photo becomes the fixed canvas.</span>
@@ -30,7 +30,7 @@
             <img class="car-photo hidden" id="carPhoto" alt="Mazda6 reference" />
             <svg class="photo-overlay" id="photoOverlay" viewBox="0 0 1000 750" preserveAspectRatio="none" aria-hidden="true"></svg>
           </div>
-          <div class="three-wrap hidden" id="threeWrap"><div class="three-canvas" id="threeCanvas"></div><div class="three-label"><strong>3D geometry proxy</strong><span>Real configurator engine. Exact Mazda6 mesh is the next asset swap.</span></div></div>
+          <div class="three-wrap" id="threeWrap"><div class="three-canvas" id="threeCanvas"></div><div class="three-label"><strong>Loading Mazda6…</strong><span>Preparing the real car geometry.</span></div></div>
           <div class="stage-caption"><div><span class="live-dot"></span> LIVE CONFIG</div><strong id="stageName">Pearson Spec 01</strong><span id="stageSpec"></span></div>
         </div>
         <div class="photo-import-row"><span>Actual-car references</span><label class="file-chip">Side<input type="file" accept="image/*" data-photo="side" /></label><label class="file-chip">3/4<input type="file" accept="image/*" data-photo="front3q" /></label><label class="file-chip">Rear<input type="file" accept="image/*" data-photo="rear" /></label><small>Photos stay on your device. Upload once per browser session.</small></div>
@@ -46,8 +46,8 @@
       </aside>
     </main>
 
-    <section class="roadmap"><div><span>01</span><strong>Photo Twin</strong><p>Your real car, multiple angles, modular overlays.</p></div><div><span>02</span><strong>3D Digital Twin</strong><p>Swap the proxy for a licensed Mazda6 mesh and exact parts.</p></div><div><span>03</span><strong>Fitment Engine</strong><p>Wheel poke, tire diameter, stance and clearance math.</p></div><div><span>04</span><strong>Build Ledger</strong><p>Track ordered, installed and planned modifications.</p></div></section>
+    <section class="roadmap"><div><span>01</span><strong>Photo Twin</strong><p>Your real car, multiple angles, modular overlays.</p></div><div><span>02</span><strong>3D Digital Twin</strong><p>Actual Mazda6 geometry with modular wheels, stance and aero.</p></div><div><span>03</span><strong>Fitment Engine</strong><p>Wheel poke, tire diameter, stance and clearance math.</p></div><div><span>04</span><strong>Build Ledger</strong><p>Track ordered, installed and planned modifications.</p></div></section>
   </div>
-  <script defer src="./app.js?v=20261013b"></script>
+  <script defer src="./app.js?v=20261013c"></script>
 </body>
 </html>
